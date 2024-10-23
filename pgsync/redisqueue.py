@@ -2,12 +2,13 @@
 
 import json
 import logging
+import os
 import typing as t
 
 from redis import Redis
 from redis.exceptions import ConnectionError
 
-from .settings import REDIS_READ_CHUNK_SIZE, REDIS_SOCKET_TIMEOUT
+from .settings import REDIS_READ_CHUNK_SIZE, REDIS_SOCKET_TIMEOUT, REDIS_SSL, REDIS_SSL_CA_CERT_PATH
 from .urls import get_redis_url
 
 logger = logging.getLogger(__name__)
@@ -20,10 +21,24 @@ class RedisQueue(object):
         """Init Simple Queue with Redis Backend."""
         url: str = get_redis_url(**kwargs)
         self.key: str = f"{namespace}:{name}"
+
+        ssl_ca_certs = REDIS_SSL_CA_CERT_PATH
+        if ssl_ca_certs and not os.path.exists(ssl_ca_certs):
+            raise IOError(
+                f'"{ssl_ca_certs}" not found.\n'
+                f"Provide a valid file containing SSL certificate "
+                f"authority (CA) certificate(s)."
+            )
+        ssl_options = dict(
+            ssl=True,
+            ssl_cert_reqs="required",
+            ssl_ca_certs=ssl_ca_certs,
+        )
         try:
             self.__db: Redis = Redis.from_url(
                 url,
                 socket_timeout=REDIS_SOCKET_TIMEOUT,
+                **ssl_options if REDIS_SSL == True else {},
             )
             self.__db.ping()
         except ConnectionError as e:

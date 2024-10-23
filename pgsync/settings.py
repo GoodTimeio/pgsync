@@ -175,7 +175,8 @@ REDIS_SCHEME = env.str("REDIS_SCHEME", default="redis")
 REDIS_SOCKET_TIMEOUT = env.int("REDIS_SOCKET_TIMEOUT", default=5)
 # number of items to write to Redis at a time
 REDIS_WRITE_CHUNK_SIZE = env.int("REDIS_WRITE_CHUNK_SIZE", default=500)
-
+REDIS_SSL = env.bool("REDIS_SSL", default=False)
+REDIS_SSL_CA_CERT_PATH = env.str("REDIS_SSL_CA_CERT_PATH", default=None)
 
 # Logging:
 def _get_logging_config(silent_loggers: t.Optional[str] = None):
