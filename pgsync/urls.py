@@ -1,7 +1,6 @@
 """PGSync urls."""
 
 import logging
-import os
 import typing as t
 from urllib.parse import quote_plus
 
@@ -23,8 +22,6 @@ from .settings import (
     REDIS_PORT,
     REDIS_SCHEME,
     REDIS_USER,
-    REDIS_SSL,
-    REDIS_SSL_CA_CERT_PATH,
 )
 
 logger = logging.getLogger(__name__)
@@ -124,9 +121,7 @@ def get_redis_url(
     username: t.Optional[str] = None,
     password: t.Optional[str] = None,
     port: t.Optional[int] = None,
-    db: t.Optional[str] = None,
-    ssl: t.Optional[bool] = None,
-    ssl_ca_certs: t.Optional[str] = None,
+    db: t.Optional[str] = None
 ) -> str:
     """
     Return the URL to connect to Redis.
@@ -149,22 +144,11 @@ def get_redis_url(
     db = db or REDIS_DB
     scheme = scheme or REDIS_SCHEME
 
-    use_ssl = ssl or REDIS_SSL
-    ssl_ca_certs = ssl_ca_certs or REDIS_SSL_CA_CERT_PATH
-    if ssl_ca_certs and not os.path.exists(ssl_ca_certs):
-        raise IOError(
-            f'"{ssl_ca_certs}" not found.\n'
-            f"Provide a valid file containing SSL certificate "
-            f"authority (CA) certificate(s)."
-        )
-
-    ssl_opts = f"?ssl_cert_reqs=required&ssl_ca_certs={ssl_ca_certs}" if use_ssl else ""
-
     if username and password:
         logger.debug("Connecting to Redis with custom username and password.")
-        return f"{scheme}://{quote_plus(username)}:{quote_plus(password)}@{host}:{port}/{db}{ssl_opts}"
+        return f"{scheme}://{quote_plus(username)}:{quote_plus(password)}@{host}:{port}/{db}"
     if password:
         logger.debug("Connecting to Redis with default password.")
-        return f"{scheme}://:{quote_plus(password)}@{host}:{port}/{db}{ssl_opts}"
+        return f"{scheme}://:{quote_plus(password)}@{host}:{port}/{db}"
     logger.debug("Connecting to Redis without password.")
-    return f"{scheme}://{host}:{port}/{db}{ssl_opts}"
+    return f"{scheme}://{host}:{port}/{db}"

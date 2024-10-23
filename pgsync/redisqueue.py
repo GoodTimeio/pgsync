@@ -7,7 +7,7 @@ import typing as t
 from redis import Redis
 from redis.exceptions import ConnectionError
 
-from .settings import REDIS_READ_CHUNK_SIZE, REDIS_SOCKET_TIMEOUT
+from .settings import REDIS_READ_CHUNK_SIZE, REDIS_SOCKET_TIMEOUT, REDIS_SSL, REDIS_SSL_CA_CERT_PATH
 from .urls import get_redis_url
 
 logger = logging.getLogger(__name__)
@@ -21,10 +21,13 @@ class RedisQueue(object):
         url: str = get_redis_url(**kwargs)
         self.key: str = f"{namespace}:{name}"
 
+        use_ssl = REDIS_SSL == True and REDIS_SSL_CA_CERT_PATH is not None
         try:
             self.__db: Redis = Redis.from_url(
                 url,
-                socket_timeout=REDIS_SOCKET_TIMEOUT
+                socket_timeout=REDIS_SOCKET_TIMEOUT,
+                ssl_ca_certs=REDIS_SSL_CA_CERT_PATH if use_ssl == True else None,
+                ssl_cert_reqs="required" if use_ssl == True else None,
             )
             self.__db.ping()
         except ConnectionError as e:
