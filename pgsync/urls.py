@@ -121,7 +121,8 @@ def get_redis_url(
     username: t.Optional[str] = None,
     password: t.Optional[str] = None,
     port: t.Optional[int] = None,
-    db: t.Optional[str] = None
+    db: t.Optional[str] = None,
+    ssl: t.Optional[bool] = False,
 ) -> str:
     """
     Return the URL to connect to Redis.
@@ -143,6 +144,9 @@ def get_redis_url(
     port = port or REDIS_PORT
     db = db or REDIS_DB
     scheme = scheme or REDIS_SCHEME
+
+    if ssl:
+        scheme = "rediss"
 
     if username and password:
         logger.debug("Connecting to Redis with custom username and password.")
