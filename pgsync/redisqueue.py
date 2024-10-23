@@ -22,7 +22,7 @@ class RedisQueue(object):
         self.key: str = f"{namespace}:{name}"
 
         try:
-            self.__db: Redis = Redis(
+            self.__db: Redis = Redis.from_url(
                 url,
                 socket_timeout=REDIS_SOCKET_TIMEOUT
             )
