@@ -7,7 +7,17 @@ import typing as t
 from redis import Redis
 from redis.exceptions import ConnectionError
 
-from .settings import REDIS_READ_CHUNK_SIZE, REDIS_SOCKET_TIMEOUT
+from .settings import (
+    REDIS_READ_CHUNK_SIZE,
+    REDIS_SOCKET_TIMEOUT,
+    REDIS_AUTH,
+    REDIS_USER,
+    REDIS_DB,
+    REDIS_HOST,
+    REDIS_PORT,
+    REDIS_SSL,
+    REDIS_SSL_CA_CERT_PATH,
+)
 from .urls import get_redis_url
 
 logger = logging.getLogger(__name__)
@@ -21,11 +31,25 @@ class RedisQueue(object):
         url: str = get_redis_url(**kwargs)
         self.key: str = f"{namespace}:{name}"
 
+        use_ssl = REDIS_SSL is True or REDIS_SSL_CA_CERT_PATH is not None
+
         try:
-            self.__db: Redis = Redis.from_url(
-                url,
-                socket_timeout=REDIS_SOCKET_TIMEOUT
-            )
+            if use_ssl:
+                self.__db: Redis = Redis(
+                    socket_timeout=REDIS_SOCKET_TIMEOUT,
+                    host=REDIS_HOST,
+                    username=REDIS_USER,
+                    password=REDIS_AUTH,
+                    port=REDIS_PORT,
+                    db=REDIS_DB,
+                    ssl=True,
+                    ssl_ca_certs=REDIS_SSL_CA_CERT_PATH
+                )
+            else:
+                self.__db: Redis = Redis.from_url(
+                    url,
+                    socket_timeout=REDIS_SOCKET_TIMEOUT
+                )
             self.__db.ping()
         except ConnectionError as e:
             logger.exception(f"Redis server is not running: {e}")
