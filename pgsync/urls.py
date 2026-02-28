@@ -162,6 +162,7 @@ def get_redis_url(
     password: t.Optional[str] = None,
     port: t.Optional[int] = None,
     db: t.Optional[str] = None,
+    ssl: t.Optional[bool] = False,
 ) -> str:
     """
     Return the URL to connect to Redis/Valkey.
@@ -188,6 +189,10 @@ def get_redis_url(
         return REDIS_URL.strip()
 
     auth: str = ""
+
+    if ssl:
+        scheme = "rediss"
+
     if username and password:
         auth = f"{quote_plus(username)}:{quote_plus(password)}@"
         logger.debug("Connecting to Redis with custom username and password.")
