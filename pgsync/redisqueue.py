@@ -11,6 +11,13 @@ from .settings import (
     REDIS_READ_CHUNK_SIZE,
     REDIS_RETRY_ON_TIMEOUT,
     REDIS_SOCKET_TIMEOUT,
+    REDIS_AUTH,
+    REDIS_USER,
+    REDIS_DB,
+    REDIS_HOST,
+    REDIS_PORT,
+    REDIS_SSL,
+    REDIS_SSL_CA_CERT_PATH,
 )
 from .urls import get_redis_url
 
@@ -25,14 +32,26 @@ class RedisQueue(object):
         url: str = get_redis_url(**kwargs)
         self.key: str = f"{namespace}:{name}"
         self._meta_key: str = f"{self.key}:meta"
-        self.__db: Redis = Redis.from_url(
-            url,
-            socket_timeout=REDIS_SOCKET_TIMEOUT,
-            retry_on_timeout=REDIS_RETRY_ON_TIMEOUT,
-        )
+        self.ssl: bool = kwargs.get("ssl", REDIS_SSL)
+        self.redis_ssl_args: dict = {}
+
+        if self.ssl:
+            logger.info(f"Using SSL connection to Redis server: {REDIS_SSL_CA_CERT_PATH}")
+            self.redis_ssl_args = dict(
+                ssl_cert_reqs="required",
+                ssl_ca_certs=REDIS_SSL_CA_CERT_PATH,
+            )
+
         try:
+            self.__db: Redis = Redis.from_url(
+                url,
+                socket_timeout=REDIS_SOCKET_TIMEOUT,
+                retry_on_timeout=REDIS_RETRY_ON_TIMEOUT,
+                **self.redis_ssl_args,
+            )
             self.ping()
-        except ConnectionError:
+        except ConnectionError as e:
+            logger.exception(f"Redis server is not running: {e}")
             raise
 
     def ping(self) -> bool:
@@ -49,7 +68,6 @@ class RedisQueue(object):
             return bool(self.__db.ping())
         except ConnectionError as exc:
             logger.exception("Redis server is not reachable when pinging.")
-            raise
 
     @property
     def qsize(self) -> int:

@@ -34,6 +34,7 @@ from .exc import (
 )
 from .settings import (
     IS_MYSQL_COMPAT,
+    MAX_ROW_BUFFER,
     MYSQL_DATABASE,
     PG_DATABASE,
     PG_HOST_RO,
@@ -1219,10 +1220,12 @@ class Base(object):
         stream_results: t.Optional[bool] = None,
     ):
         chunk_size = chunk_size or QUERY_CHUNK_SIZE
+        max_row_buffer = MAX_ROW_BUFFER
         stream_results = stream_results or STREAM_RESULTS
         with self.engine.connect() as conn:
             result = conn.execution_options(
-                stream_results=stream_results
+                stream_results=stream_results,
+                max_row_buffer=max_row_buffer
             ).execute(statement.select())
             for partition in result.partitions(chunk_size):
                 for keys, row, *primary_keys in partition:

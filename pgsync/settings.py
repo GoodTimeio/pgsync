@@ -50,6 +50,7 @@ POLL_TIMEOUT = env.float("POLL_TIMEOUT", default=0.1)
 QUERY_LITERAL_BINDS = env.bool("QUERY_LITERAL_BINDS", default=False)
 # Records to fetch per database query
 QUERY_CHUNK_SIZE = env.int("QUERY_CHUNK_SIZE", default=10000)
+MAX_ROW_BUFFER = env.int("MAX_ROW_BUFFER", default=1000)
 # Records per filter chunk
 FILTER_CHUNK_SIZE = env.int("FILTER_CHUNK_SIZE", default=5000)
 # Replication slot cleanup interval in seconds
@@ -278,11 +279,12 @@ REDIS_READ_CHUNK_SIZE = env.int("REDIS_READ_CHUNK_SIZE", default=1000)
 REDIS_WRITE_CHUNK_SIZE = env.int("REDIS_WRITE_CHUNK_SIZE", default=500)
 REDIS_SOCKET_TIMEOUT = env.int("REDIS_SOCKET_TIMEOUT", default=5)
 REDIS_RETRY_ON_TIMEOUT = env.bool("REDIS_RETRY_ON_TIMEOUT", default=False)
+REDIS_SSL = env.bool("REDIS_SSL", default=False)
+REDIS_SSL_CA_CERT_PATH = env.str("REDIS_SSL_CA_CERT_PATH", default=None)
 
 # =============================================================================
 # Logging
 # =============================================================================
-
 
 def _get_logging_config(
     silent_loggers: t.Optional[t.List[str]] = None,
