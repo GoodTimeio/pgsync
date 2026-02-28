@@ -646,3 +646,29 @@ class TestSearchClientBulkOperations:
                     ):
                         # Should not raise when settings are False
                         client.bulk("test", actions)
+
+    def test_bulk_uses_streaming_bulk_by_default(self):
+        """Test that streaming_bulk is used by default to minimize memory usage."""
+        with override_env_var(ELASTICSEARCH="False", OPENSEARCH="True"):
+            importlib.reload(settings)
+            with mock.patch(
+                "pgsync.search_client.get_search_url",
+                return_value="http://localhost:9200",
+            ):
+                with mock.patch(
+                    "pgsync.search_client.get_search_client",
+                    return_value=MagicMock(),
+                ):
+                    client = SearchClient()
+                    client.streaming_bulk = MagicMock(
+                        return_value=[(True, {})]
+                    )
+                    client.parallel_bulk = MagicMock(
+                        return_value=[(True, {})]
+                    )
+
+                    actions = [{"_id": "1", "_source": {"field": "value"}}]
+                    client.bulk("test_index", actions)
+
+                    client.streaming_bulk.assert_called_once()
+                    client.parallel_bulk.assert_not_called()

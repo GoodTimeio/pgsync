@@ -2,7 +2,7 @@
 
 import pytest
 import sqlalchemy as sa
-from mock import call, patch
+from mock import call, MagicMock, patch
 
 from pgsync.base import (
     _pg_engine,
@@ -1420,3 +1420,37 @@ class TestDatabaseOperations:
         # Should return integer
         assert isinstance(txid, int)
         assert txid > 0
+
+
+class TestFetchMany:
+    """Unit tests for fetchmany memory management, no DB required."""
+
+    def test_fetchmany_calls_gc_collect_after_each_partition(self):
+        """fetchmany must call gc.collect() after each partition to release
+        cyclic references and limit memory growth during large dataset syncs."""
+        partition1 = [("k1", {"a": 1}, 1), ("k2", {"a": 2}, 2)]
+        partition2 = [("k3", {"a": 3}, 3)]
+
+        mock_result = MagicMock()
+        mock_result.partitions.return_value = iter([partition1, partition2])
+
+        mock_conn = MagicMock()
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+        mock_conn.execution_options.return_value.execute.return_value = (
+            mock_result
+        )
+
+        mock_engine = MagicMock()
+        mock_engine.connect.return_value = mock_conn
+
+        with patch("pgsync.base._pg_engine", return_value=mock_engine):
+            pg_base = Base("testdb")
+
+        mock_statement = MagicMock()
+
+        with patch("pgsync.base.gc.collect") as mock_gc:
+            rows = list(pg_base.fetchmany(mock_statement))
+
+        assert len(rows) == 3
+        assert mock_gc.call_count == 2

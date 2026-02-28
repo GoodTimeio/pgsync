@@ -1,5 +1,6 @@
 """PGSync Base."""
 
+import gc
 import logging
 import os
 import random
@@ -1230,6 +1231,7 @@ class Base(object):
             for partition in result.partitions(chunk_size):
                 for keys, row, *primary_keys in partition:
                     yield keys, row, primary_keys
+                gc.collect()
             result.close()
         self.engine.clear_compiled_cache()
 
