@@ -49,7 +49,7 @@ POLL_TIMEOUT = env.float("POLL_TIMEOUT", default=0.1)
 # Render SQL with literal binds for debugging
 QUERY_LITERAL_BINDS = env.bool("QUERY_LITERAL_BINDS", default=False)
 # Records to fetch per database query
-QUERY_CHUNK_SIZE = env.int("QUERY_CHUNK_SIZE", default=10000)
+QUERY_CHUNK_SIZE = env.int("QUERY_CHUNK_SIZE", default=5000)
 MAX_ROW_BUFFER = env.int("MAX_ROW_BUFFER", default=1000)
 # Records per filter chunk
 FILTER_CHUNK_SIZE = env.int("FILTER_CHUNK_SIZE", default=5000)
@@ -143,12 +143,12 @@ ELASTICSEARCH_SSL_SHOW_WARN = env.bool(
 )
 
 # Bulk indexing
-ELASTICSEARCH_CHUNK_SIZE = env.int("ELASTICSEARCH_CHUNK_SIZE", default=5000)
+ELASTICSEARCH_CHUNK_SIZE = env.int("ELASTICSEARCH_CHUNK_SIZE", default=2000)
 ELASTICSEARCH_MAX_CHUNK_BYTES = env.int(
-    "ELASTICSEARCH_MAX_CHUNK_BYTES", default=104857600  # 100MB
+    "ELASTICSEARCH_MAX_CHUNK_BYTES", default=10485760  # 10MB
 )
 ELASTICSEARCH_STREAMING_BULK = env.bool(
-    "ELASTICSEARCH_STREAMING_BULK", default=False
+    "ELASTICSEARCH_STREAMING_BULK", default=True
 )
 ELASTICSEARCH_HTTP_COMPRESS = env.bool(
     "ELASTICSEARCH_HTTP_COMPRESS", default=True
