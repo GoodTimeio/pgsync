@@ -549,7 +549,6 @@ class Sync(Base, metaclass=Singleton):
         TODO: We can also process all INSERTS together and rearrange
         them as done below
         """
-        offset: int = 0
         limit: int = (
             logical_slot_chunk_size or settings.LOGICAL_SLOT_CHUNK_SIZE
         )
@@ -561,18 +560,18 @@ class Sync(Base, metaclass=Singleton):
             upto_lsn=upto_lsn,
         )
         while True:
-            # peek one page of up to limit rows
+            # Peek one page of up to `limit` rows without advancing the slot.
+            # We process first, then consume that same page. This avoids
+            # offset-based scans and drains the slot progressively.
             raw: t.List[sa.engine.row.Row] = self.logical_slot_peek_changes(
                 slot_name=self.__name,
                 txmin=txmin,
                 txmax=txmax,
                 upto_lsn=upto_lsn,
                 limit=limit,
-                offset=offset,
             )
             if not raw:
                 break
-            offset += limit
 
             # parse and filter out BEGIN/COMMIT and unwanted schemas
             payloads: t.List[Payload] = []
@@ -600,13 +599,15 @@ class Sync(Base, metaclass=Singleton):
                     self.search_client.bulk(self.index, self._payloads(batch))
                     self.count["xlog"] += len(batch)
 
-        # mark those rows consumed
-        self.logical_slot_get_changes(
-            slot_name=self.__name,
-            txmin=txmin,
-            txmax=txmax,
-            upto_lsn=upto_lsn,
-        )
+            # Consume exactly one page after successful processing so WAL is
+            # acknowledged progressively rather than only at the very end.
+            self.logical_slot_get_changes(
+                slot_name=self.__name,
+                txmin=txmin,
+                txmax=txmax,
+                upto_lsn=upto_lsn,
+                limit=limit,
+            )
         self.checkpoint = txmax or self.txid_current
 
     def _xlog_progress(self, current: int, total: t.Optional[int]) -> None:
