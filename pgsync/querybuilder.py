@@ -435,7 +435,7 @@ class QueryBuilder(threading.local):
                     )
                 )
 
-        if txmin:
+        if txmin and "xmin" in node.model.c:
             node._filters.append(
                 sa.cast(
                     sa.cast(
@@ -446,7 +446,7 @@ class QueryBuilder(threading.local):
                 )
                 >= txmin
             )
-        if txmax:
+        if txmax and "xmin" in node.model.c:
             node._filters.append(
                 sa.cast(
                     sa.cast(

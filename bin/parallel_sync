@@ -142,6 +142,17 @@ def fetch_tasks(
         "[^0-9a-zA-Z_]+", "", f"{sync.database.lower()}_{sync.index}"
     )
     page, row = read_ctid(filename)
+
+    # View-backed roots don't expose ctid by default, so ctid-based
+    # partitioning cannot be used. Yield a single empty task to run one
+    # forward pass without ctid slicing.
+    if "ctid" not in sync.tree.root.model.c:
+        sys.stdout.write(
+            "Root relation has no ctid; running a single non-ctid task.\n"
+        )
+        yield {}
+        return
+
     statement: sa.sql.Select = sa.select(
         *[
             sa.literal_column("1").label("x"),

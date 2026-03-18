@@ -324,14 +324,21 @@ class Base(object):
                     f'Table "{name}" not found in registry'
                 )
             model = metadata.tables[name]
-            model.append_column(sa.Column("xmin", sa.BigInteger))
-            model.append_column(sa.Column("ctid"), TupleIdentifierType)
-            # support SQLAlchemy/Postgres 14 which somehow now reflects
-            # the oid column
-            if "oid" not in [column.name for column in model.columns]:
-                model.append_column(
-                    sa.Column("oid", sa.dialects.postgresql.OID)
-                )
+            # Views do not expose Postgres tuple/system columns by default.
+            # Only attach these pseudo columns for base tables.
+            if table not in self.views(schema):
+                if "xmin" not in [column.name for column in model.columns]:
+                    model.append_column(sa.Column("xmin", sa.BigInteger))
+                if "ctid" not in [column.name for column in model.columns]:
+                    model.append_column(
+                        sa.Column("ctid"), TupleIdentifierType
+                    )
+                # support SQLAlchemy/Postgres 14 which somehow now reflects
+                # the oid column
+                if "oid" not in [column.name for column in model.columns]:
+                    model.append_column(
+                        sa.Column("oid", sa.dialects.postgresql.OID)
+                    )
             model = model.alias()
             setattr(
                 model,
