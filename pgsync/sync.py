@@ -1178,7 +1178,12 @@ class Sync(Base, metaclass=Singleton):
                         "_op_type": "delete",
                     }
                     if self.routing:
-                        doc["_routing"] = old_values[self.routing]
+                        routing_value = payload.old.get(
+                            self.routing,
+                            payload.new.get(self.routing),
+                        )
+                        if routing_value is not None:
+                            doc["_routing"] = routing_value
                     if (
                         self.search_client.major_version < 7
                         and not self.search_client.is_opensearch

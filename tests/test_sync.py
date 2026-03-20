@@ -630,6 +630,62 @@ class TestSync(object):
         )
         assert len(docs["hits"]["hits"]) == 0
 
+    def test__update_op_uses_old_routing_for_delete(self, sync, connection):
+        pg_base = Base(connection.engine.url.database)
+        node = Node(
+            models=pg_base.models,
+            table="book",
+            schema="public",
+        )
+        sync.routing = "user_id"
+        filters: dict = {"book": []}
+        payloads: t.List[Payload] = [
+            Payload(
+                tg_op="UPDATE",
+                table="book",
+                old={"isbn": "001", "user_id": "old-route"},
+                new={"isbn": "aa1", "user_id": "new-route"},
+            )
+        ]
+
+        with patch.object(sync.search_client, "bulk") as mock_bulk:
+            _filters = sync._update_op(node, filters, payloads)
+
+        assert _filters == {"book": [{"isbn": "aa1"}]}
+        mock_bulk.assert_called_once()
+        docs = mock_bulk.call_args.args[1]
+        assert docs[0]["_id"] == "001"
+        assert docs[0]["_routing"] == "old-route"
+
+    def test__update_op_falls_back_to_new_routing_for_delete(
+        self, sync, connection
+    ):
+        pg_base = Base(connection.engine.url.database)
+        node = Node(
+            models=pg_base.models,
+            table="book",
+            schema="public",
+        )
+        sync.routing = "user_id"
+        filters: dict = {"book": []}
+        payloads: t.List[Payload] = [
+            Payload(
+                tg_op="UPDATE",
+                table="book",
+                old={"isbn": "001"},
+                new={"isbn": "aa1", "user_id": "new-route"},
+            )
+        ]
+
+        with patch.object(sync.search_client, "bulk") as mock_bulk:
+            _filters = sync._update_op(node, filters, payloads)
+
+        assert _filters == {"book": [{"isbn": "aa1"}]}
+        mock_bulk.assert_called_once()
+        docs = mock_bulk.call_args.args[1]
+        assert docs[0]["_id"] == "001"
+        assert docs[0]["_routing"] == "new-route"
+
     def test__insert_op(self, sync, connection):
         pg_base = Base(connection.engine.url.database)
         node = Node(
