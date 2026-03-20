@@ -1917,22 +1917,24 @@ class Sync(Base, metaclass=Singleton):
     ) -> None:
         # If we have buffered docs, send them
         if self._buffer:
-            logger.info(f"flushing buffer with {len(self._buffer)} docs")
+            logger.debug(f"flushing buffer with {len(self._buffer)} docs")
             docs: list = []
             for (op, tbl), run in groupby(
                 self._buffer,
                 key=lambda payload: (payload.tg_op, payload.table),
             ):
                 batch: list = list(run)
-                logger.info(f"bulk group op={op} tbl={tbl} size={len(batch)}")
+                logger.debug(
+                    f"bulk group op={op} tbl={tbl} size={len(batch)}"
+                )
                 docs.extend(self._payloads(batch))
 
             if docs:
                 processed: int = len(self._buffer)
-                logger.info(f"sending bulk of {len(docs)} docs")
+                logger.debug(f"sending bulk of {len(docs)} docs")
                 self.search_client.bulk(self.index, docs)
                 self.count["xlog"] += processed
-                logger.info(f"sent bulk of {len(docs)} docs")
+                logger.debug(f"sent bulk of {len(docs)} docs")
 
             # if caller didn't provide a flush_lsn, then fall back to last buffered row
             if flush_lsn is None:
@@ -1945,7 +1947,7 @@ class Sync(Base, metaclass=Singleton):
         # Even if buffer was empty, we may want to ACK a COMMIT LSN
         if flush_lsn is not None and (force_ack or not self._buffer):
             cursor.send_feedback(flush_lsn=flush_lsn, force=True)
-            logger.info(f"sent feedback flush_lsn=P{flush_lsn}")
+            logger.debug(f"sent feedback flush_lsn=P{flush_lsn}")
 
     def consume(self, message: t.Any) -> None:
         raw: t.Any = message.payload
@@ -2002,8 +2004,21 @@ class Sync(Base, metaclass=Singleton):
             options={"include-xids": "1", "skip-empty-xacts": "1"},
             decode=True,  # gets you str instead of bytes
         )
+        self.wal_status()
         logger.info("Starting logical replication stream (test_decoding)...")
         cursor.consume_stream(self.consume)
+
+    @threaded
+    @exception
+    def wal_status(self) -> None:
+        while True:
+            logger.info(
+                f"WAL {self.database}:{self.index} "
+                f"Processed: [{format_number(self.count['xlog'])}] => "
+                f"{self.search_client.name}: "
+                f"[{format_number(self.search_client.doc_count)}]"
+            )
+            time.sleep(settings.WAL_LOG_INTERVAL)
 
     @threaded
     @exception

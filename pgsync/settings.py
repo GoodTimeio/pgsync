@@ -40,6 +40,8 @@ JOIN_QUERIES = env.bool("JOIN_QUERIES", default=False)
 LOGICAL_SLOT_CHUNK_SIZE = env.int("LOGICAL_SLOT_CHUNK_SIZE", default=5000)
 # Stdout log interval in seconds
 LOG_INTERVAL = env.float("LOG_INTERVAL", default=0.5)
+# WAL status log interval in seconds
+WAL_LOG_INTERVAL = env.float("WAL_LOG_INTERVAL", default=30.0)
 # Number of workers for handling events
 NUM_WORKERS = env.int("NUM_WORKERS", default=2)
 # Database driver: psycopg2, psycopg3, pymysql, etc.
