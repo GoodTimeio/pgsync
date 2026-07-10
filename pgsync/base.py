@@ -514,7 +514,9 @@ class Base(object):
             label="replication_slots",
         )
 
-    def create_replication_slot(self, slot_name: str) -> None:
+    def create_replication_slot(
+        self, slot_name: str, plugin: t.Optional[str] = None
+    ) -> None:
         """Create a replication slot.
 
         TODO:
@@ -523,7 +525,10 @@ class Base(object):
 
         SELECT * FROM PG_REPLICATION_SLOTS
         """
-        logger.debug(f"Creating replication slot: {slot_name}")
+        plugin = plugin or PLUGIN
+        logger.debug(
+            f"Creating replication slot: {slot_name} (plugin={plugin})"
+        )
         try:
             with self.advisory_lock(
                 slot_name, max_retries=None, retry_interval=0.1
@@ -532,7 +537,7 @@ class Base(object):
                     sa.select("*").select_from(
                         sa.func.PG_CREATE_LOGICAL_REPLICATION_SLOT(
                             slot_name,
-                            PLUGIN,
+                            plugin,
                         )
                     )
                 )

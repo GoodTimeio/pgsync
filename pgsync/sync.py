@@ -42,6 +42,7 @@ from .constants import (
     MATERIALIZED_VIEW,
     MATERIALIZED_VIEW_COLUMNS,
     META,
+    PLUGIN,
     PRIMARY_KEY_DELIMITER,
     TG_OPS,
     TRUNCATE,
@@ -56,6 +57,7 @@ from .exc import (
     SchemaError,
 )
 from .node import Node, Tree
+from .pgoutput import PgOutputDecoder
 from .plugin import Plugins
 from .querybuilder import QueryBuilder
 from .redisqueue import RedisQueue
@@ -109,6 +111,14 @@ class Sync(Base, metaclass=Singleton):
         self.mapping: dict = doc.get("mapping")
         self.mappings: dict = doc.get("mappings")
         self.routing: str = doc.get("routing")
+        # Logical decoding plugin + publication (pgoutput scoping). Per-index
+        # config in the schema doc takes precedence over the global env setting.
+        self.plugin: str = (
+            doc.get("plugin") or settings.REPLICATION_PLUGIN or PLUGIN
+        )
+        self.publication: t.Optional[str] = (
+            doc.get("publication") or settings.PUBLICATION
+        )
         super().__init__(
             doc.get("database", self.index), verbose=verbose, **kwargs
         )
@@ -144,6 +154,9 @@ class Sync(Base, metaclass=Singleton):
         self.lock: threading.Lock = threading.Lock()
         # holds Payload objects across multiple consume() calls
         self._buffer: list["Payload"] = []
+        self._buffer_last_lsn: t.Optional[int] = None
+        # pgoutput protocol decoder (created when a pgoutput stream starts)
+        self._pgoutput: t.Optional[PgOutputDecoder] = None
 
     @property
     def slot_name(self) -> str:
@@ -210,7 +223,9 @@ class Sync(Base, metaclass=Singleton):
                 raise RDSError("rds.logical_replication is not enabled")
 
             # ensure we have run bootstrap and the replication slot exists
-            if repl_slots and not self.replication_slots(self.__name):
+            if repl_slots and not self.replication_slots(
+                self.__name, plugin=self.plugin
+            ):
                 raise RuntimeError(
                     f'Replication slot "{self.__name}" does not exist.\n'
                     f'Make sure you have run the "bootstrap" command.'
@@ -424,9 +439,13 @@ class Sync(Base, metaclass=Singleton):
                         )
 
             if not polling:
-                if if_not_exists or not self.replication_slots(self.__name):
+                if if_not_exists or not self.replication_slots(
+                    self.__name, plugin=self.plugin
+                ):
 
-                    self.create_replication_slot(self.__name)
+                    self.create_replication_slot(
+                        self.__name, plugin=self.plugin
+                    )
 
     def teardown(
         self,
@@ -2000,18 +2019,124 @@ class Sync(Base, metaclass=Singleton):
             self._flush_buffer(message.cursor)
 
     def wal_consumer(self) -> None:
+        # Ensure the scoped slot exists (create with the configured plugin if
+        # missing) *before* the catch-up so it captures everything from now on.
+        if not self.replication_slots(self.__name, plugin=self.plugin):
+            logger.info(
+                f"Replication slot {self.__name} missing; creating with "
+                f"plugin={self.plugin}"
+            )
+            self.create_replication_slot(self.__name, plugin=self.plugin)
+
+        # One-shot forward catch-up: re-materialise only rows changed since the
+        # provided xmin bound, closing the gap left when swapping a slot's
+        # plugin without a full reseed. Idempotent upserts absorb any overlap
+        # with changes the freshly created slot also captured.
+        self.wal_catchup()
+
         # open a replication‐mode connection
         conn = pg_logical_repl_conn(database=self.database)
         cursor = conn.cursor()
-        # start streaming; include XIDs so you see BEGIN/COMMIT markers
-        cursor.start_replication(
-            slot_name=self.__name,
-            options={"include-xids": "1", "skip-empty-xacts": "1"},
-            decode=True,  # gets you str instead of bytes
+
+        if self.plugin == "pgoutput":
+            if not self.publication:
+                raise RuntimeError(
+                    "PUBLICATION is required when using the pgoutput plugin. "
+                    'Set the "publication" key in the schema config or the '
+                    "PUBLICATION env var."
+                )
+            self._pgoutput = PgOutputDecoder()
+            cursor.start_replication(
+                slot_name=self.__name,
+                decode=False,  # pgoutput is a binary protocol
+                options={
+                    "proto_version": settings.PGOUTPUT_PROTO_VERSION,
+                    "publication_names": self.publication,
+                },
+            )
+            self.wal_status()
+            logger.info(
+                f"Starting logical replication stream "
+                f"(pgoutput, publication={self.publication})..."
+            )
+            cursor.consume_stream(self.consume_pgoutput)
+        else:
+            # start streaming; include XIDs so you see BEGIN/COMMIT markers
+            cursor.start_replication(
+                slot_name=self.__name,
+                options={"include-xids": "1", "skip-empty-xacts": "1"},
+                decode=True,  # gets you str instead of bytes
+            )
+            self.wal_status()
+            logger.info(
+                "Starting logical replication stream (test_decoding)..."
+            )
+            cursor.consume_stream(self.consume)
+
+    def wal_catchup(self) -> None:
+        """Forward-sync rows changed since ``WAL_CATCHUP_TXMIN`` (one-shot).
+
+        Only rows whose ``xmin`` is at or after the bound are re-materialised,
+        so this is proportional to the number of *changed* rows in the gap
+        window, not the size of the table. Used to bridge a plugin swap without
+        a full reseed.
+        """
+        txmin: t.Optional[int] = settings.WAL_CATCHUP_TXMIN
+        if txmin is None:
+            return
+        txmax: int = self.txid_current
+        logger.info(
+            f"WAL catch-up forward sync for {self.database}:{self.index} "
+            f"txmin={txmin} txmax={txmax}"
         )
-        self.wal_status()
-        logger.info("Starting logical replication stream (test_decoding)...")
-        cursor.consume_stream(self.consume)
+        self.search_client.bulk(
+            self.index, self.sync(txmin=txmin, txmax=txmax)
+        )
+        logger.info(
+            f"WAL catch-up complete for {self.database}:{self.index}"
+        )
+
+    def consume_pgoutput(self, message: t.Any) -> None:
+        """Consume a single pgoutput replication message."""
+        chunk_size: int = settings.LOGICAL_SLOT_CHUNK_SIZE
+        result: t.Optional[t.Any] = self._pgoutput.decode(message.payload)
+        if result is None:
+            return
+        kind, obj = result
+
+        if kind == "commit":
+            # Flush buffered docs and ACK this transaction's end LSN.
+            self._flush_buffer(
+                cursor=message.cursor,
+                flush_lsn=message.data_start,
+                force_ack=True,
+            )
+            return
+
+        if kind == "change":
+            changes = [obj]
+        elif kind == "truncate":
+            changes = obj
+        else:
+            # begin / relation -> nothing to buffer
+            return
+
+        for change in changes:
+            if change.schema not in self.tree.schemas:
+                # not our schema; ACKed at COMMIT
+                continue
+            payload: Payload = Payload(
+                tg_op=change.tg_op,
+                table=change.table,
+                schema=change.schema,
+                old=change.old,
+                new=change.new,
+            )
+            self._buffer.append(payload)
+            self._buffer_last_lsn = message.data_start
+
+        if len(self._buffer) >= chunk_size:
+            self._flush_buffer(message.cursor)
 
     @threaded
     @exception

@@ -78,6 +78,20 @@ FORMAT_WITH_COMMAS = env.bool("FORMAT_WITH_COMMAS", default=True)
 POLLING = env.bool("POLLING", default=False)
 # Use WAL streaming mode
 WAL = env.bool("WAL", default=False)
+# Logical decoding output plugin: "test_decoding" (whole-database) or
+# "pgoutput" (filters to tables in a publication). Can be overridden per-index
+# via the "plugin" key in the schema config.
+REPLICATION_PLUGIN = env.str("REPLICATION_PLUGIN", default=None)
+# pgoutput publication name (required when REPLICATION_PLUGIN=pgoutput).
+# Can be overridden per-index via the "publication" key in the schema config.
+PUBLICATION = env.str("PUBLICATION", default=None)
+# pgoutput logical replication protocol version.
+PGOUTPUT_PROTO_VERSION = env.str("PGOUTPUT_PROTO_VERSION", default="1")
+# One-shot forward catch-up bound for WAL mode. When set, pgsync re-materializes
+# only rows whose xmin >= this value before it begins streaming, closing the gap
+# left when swapping a slot's plugin without a full reseed. Use the OLD slot's
+# catalog_xmin (raw xid) captured before dropping it.
+WAL_CATCHUP_TXMIN = env.int("WAL_CATCHUP_TXMIN", default=None)
 
 # =============================================================================
 # SQLAlchemy
