@@ -131,6 +131,7 @@ class Sync(Base, metaclass=Singleton):
         self._truncate: bool = False
         self.producer: bool = producer
         self.consumer: bool = consumer
+        self.wal: bool = wal
         self.num_workers: int = num_workers
         # Redis not required in wal or polling mode
         self._redis: t.Optional[RedisQueue] = None
@@ -142,7 +143,7 @@ class Sync(Base, metaclass=Singleton):
             self.setup(polling=polling, wal=wal)
 
         if validate:
-            self.validate(repl_slots=repl_slots, polling=polling)
+            self.validate(repl_slots=repl_slots, polling=polling, wal=wal)
             self.create_setting()
 
         if self.plugins:
@@ -177,7 +178,12 @@ class Sync(Base, metaclass=Singleton):
                 pass
         return self._redis
 
-    def validate(self, repl_slots: bool = True, polling: bool = False) -> None:
+    def validate(
+        self,
+        repl_slots: bool = True,
+        polling: bool = False,
+        wal: bool = False,
+    ) -> None:
         """Perform all validation right away."""
 
         # ensure v2 compatible schema
@@ -226,10 +232,23 @@ class Sync(Base, metaclass=Singleton):
             if repl_slots and not self.replication_slots(
                 self.__name, plugin=self.plugin
             ):
-                raise RuntimeError(
-                    f'Replication slot "{self.__name}" does not exist.\n'
-                    f'Make sure you have run the "bootstrap" command.'
-                )
+                # In WAL mode the consumer manages its own slot lifecycle, so
+                # create it here (with the configured plugin) rather than
+                # forcing a separate bootstrap run. This is what enables a
+                # plugin swap (e.g. test_decoding -> pgoutput) without a reseed.
+                if wal:
+                    logger.info(
+                        f'Replication slot "{self.__name}" missing; creating '
+                        f"with plugin={self.plugin}"
+                    )
+                    self.create_replication_slot(
+                        self.__name, plugin=self.plugin
+                    )
+                else:
+                    raise RuntimeError(
+                        f'Replication slot "{self.__name}" does not exist.\n'
+                        f'Make sure you have run the "bootstrap" command.'
+                    )
 
         if settings.REDIS_CHECKPOINT:
             # ensure Redis is reachable
