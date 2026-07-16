@@ -158,6 +158,8 @@ class Sync(Base, metaclass=Singleton):
         self._buffer_last_lsn: t.Optional[int] = None
         # pgoutput protocol decoder (created when a pgoutput stream starts)
         self._pgoutput: t.Optional[PgOutputDecoder] = None
+        # whether we are currently between a pgoutput BEGIN and COMMIT
+        self._pg_in_txn: bool = False
 
     @property
     def slot_name(self) -> str:
@@ -2078,7 +2080,7 @@ class Sync(Base, metaclass=Singleton):
                 f"Starting logical replication stream "
                 f"(pgoutput, publication={self.publication})..."
             )
-            cursor.consume_stream(self.consume_pgoutput)
+            self._pgoutput_stream(cursor)
         else:
             # start streaming; include XIDs so you see BEGIN/COMMIT markers
             cursor.start_replication(
@@ -2123,6 +2125,12 @@ class Sync(Base, metaclass=Singleton):
             return
         kind, obj = result
 
+        if kind == "begin":
+            # entering a published transaction; do not advance feedback past
+            # here until we see its COMMIT
+            self._pg_in_txn = True
+            return
+
         if kind == "commit":
             # Flush buffered docs and ACK this transaction's end LSN.
             self._flush_buffer(
@@ -2130,6 +2138,7 @@ class Sync(Base, metaclass=Singleton):
                 flush_lsn=message.data_start,
                 force_ack=True,
             )
+            self._pg_in_txn = False
             return
 
         if kind == "change":
@@ -2137,7 +2146,7 @@ class Sync(Base, metaclass=Singleton):
         elif kind == "truncate":
             changes = obj
         else:
-            # begin / relation -> nothing to buffer
+            # relation -> nothing to buffer
             return
 
         for change in changes:
@@ -2156,6 +2165,53 @@ class Sync(Base, metaclass=Singleton):
 
         if len(self._buffer) >= chunk_size:
             self._flush_buffer(message.cursor)
+
+    def _pgoutput_stream(self, cursor: t.Any) -> None:
+        """Manual pgoutput replication loop with idle feedback.
+
+        ``consume_stream`` only lets us ACK LSNs for messages we receive, and a
+        pgoutput slot scoped to a publication receives nothing for transactions
+        on other (filtered) tables. In a busy database that means the slot's
+        ``confirmed_flush_lsn`` never advances past unrelated WAL between our
+        own transactions, so the reported lag grows even with no work to do.
+
+        Here we advance the flush position to the server's current WAL end
+        (``cursor.wal_end``) every ``WAL_KEEPALIVE_INTERVAL`` seconds, but only
+        when we hold nothing buffered and are not mid published-transaction, so
+        we never ACK past a change we have not fully processed.
+        """
+        interval: float = settings.WAL_KEEPALIVE_INTERVAL
+        last_feedback: float = time.monotonic()
+        while True:
+            message: t.Any = cursor.read_message()
+            if message is not None:
+                self.consume_pgoutput(message)
+            else:
+                # wait for data or a keepalive (updates cursor.wal_end)
+                select.select([cursor], [], [], interval)
+
+            now: float = time.monotonic()
+            if now - last_feedback >= interval:
+                if (
+                    not self._buffer
+                    and not self._pg_in_txn
+                    and cursor.wal_end
+                ):
+                    # Safe to advance confirmed_flush_lsn through filtered WAL:
+                    # everything delivered has been processed and there is no
+                    # open published transaction.
+                    cursor.send_feedback(
+                        flush_lsn=cursor.wal_end, force=True
+                    )
+                    logger.debug(
+                        f"advanced feedback to wal_end={cursor.wal_end}"
+                    )
+                else:
+                    # Not safe to advance the flush position, but still reply so
+                    # the server does not close the connection on
+                    # wal_sender_timeout.
+                    cursor.send_feedback(force=True)
+                last_feedback = now
 
     @threaded
     @exception

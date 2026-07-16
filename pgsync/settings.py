@@ -87,6 +87,11 @@ REPLICATION_PLUGIN = env.str("REPLICATION_PLUGIN", default=None)
 PUBLICATION = env.str("PUBLICATION", default=None)
 # pgoutput logical replication protocol version.
 PGOUTPUT_PROTO_VERSION = env.str("PGOUTPUT_PROTO_VERSION", default="1")
+# How often (seconds) the WAL consumer advances the slot's confirmed_flush_lsn
+# to the server's current WAL position while idle. Needed for pgoutput slots
+# scoped to a low-traffic publication in a busy database, so the slot does not
+# accumulate lag from unrelated (filtered) WAL between its own transactions.
+WAL_KEEPALIVE_INTERVAL = env.float("WAL_KEEPALIVE_INTERVAL", default=10.0)
 # One-shot forward catch-up bound for WAL mode. When set, pgsync re-materializes
 # only rows whose xmin >= this value before it begins streaming, closing the gap
 # left when swapping a slot's plugin without a full reseed. Use the OLD slot's
