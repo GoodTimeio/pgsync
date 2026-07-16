@@ -91,7 +91,16 @@ PGOUTPUT_PROTO_VERSION = env.str("PGOUTPUT_PROTO_VERSION", default="1")
 # to the server's current WAL position while idle. Needed for pgoutput slots
 # scoped to a low-traffic publication in a busy database, so the slot does not
 # accumulate lag from unrelated (filtered) WAL between its own transactions.
-WAL_KEEPALIVE_INTERVAL = env.float("WAL_KEEPALIVE_INTERVAL", default=10.0)
+WAL_KEEPALIVE_INTERVAL = env.float("WAL_KEEPALIVE_INTERVAL", default=3.0)
+# Per-session wal_sender_timeout (milliseconds) requested on pgsync's own
+# logical replication connection. The server sends keepalives every
+# wal_sender_timeout/2, and those keepalives are what advance cursor.wal_end
+# (and thus the slot) through filtered WAL. If the cluster sets
+# wal_sender_timeout=0 (disabling keepalives, e.g. for pglogical), set this so
+# ONLY pgsync's walsender gets keepalives, leaving other slots untouched.
+# Set to 0 to inherit the server value. Must be comfortably larger than
+# WAL_KEEPALIVE_INTERVAL so the server does not time us out.
+WAL_SENDER_TIMEOUT = env.int("WAL_SENDER_TIMEOUT", default=10000)
 # One-shot forward catch-up bound for WAL mode. When set, pgsync re-materializes
 # only rows whose xmin >= this value before it begins streaming, closing the gap
 # left when swapping a slot's plugin without a full reseed. Use the OLD slot's

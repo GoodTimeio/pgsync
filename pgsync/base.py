@@ -54,6 +54,7 @@ from .settings import (
     SQLALCHEMY_POOL_TIMEOUT,
     SQLALCHEMY_USE_NULLPOOL,
     STREAM_RESULTS,
+    WAL_SENDER_TIMEOUT,
 )
 from .trigger import CREATE_TRIGGER_TEMPLATE
 from .urls import get_database_url
@@ -1471,6 +1472,17 @@ def pg_logical_repl_conn(
     )
 
     url_: sa.engine.URL = make_url(url)
+
+    # Request a per-session wal_sender_timeout so this walsender emits
+    # keepalives (every timeout/2) even when the cluster sets it to 0. Those
+    # keepalives advance cursor.wal_end through filtered WAL. Merge with any
+    # existing libpq options rather than clobbering them.
+    if WAL_SENDER_TIMEOUT and WAL_SENDER_TIMEOUT > 0:
+        existing_options: str = connect_args.get("options", "") or ""
+        wal_option: str = f"-c wal_sender_timeout={WAL_SENDER_TIMEOUT}"
+        connect_args["options"] = (
+            f"{existing_options} {wal_option}".strip()
+        )
 
     conn: psycopg2.extensions.connection = psycopg2.connect(
         host=url_.host,
