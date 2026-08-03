@@ -9,6 +9,7 @@ from unittest.mock import Mock
 
 import pytest
 from mock import ANY, call, patch
+from psycopg2 import DatabaseError
 
 from pgsync.base import Base, Payload
 from pgsync.exc import (
@@ -2172,6 +2173,41 @@ class TestWALStreaming:
         call_kwargs = mock_cursor.start_replication.call_args[1]
         assert call_kwargs["decode"] is True
         assert "include-xids" in call_kwargs["options"]
+
+    @patch("pgsync.sync.time.sleep")
+    def test_wal_consumer_reconnects_after_connection_error(
+        self, mock_sleep
+    ):
+        """Transient libpq failures reconnect from the confirmed slot LSN."""
+        sync = Sync(
+            {
+                "index": "testdb",
+                "database": "testdb",
+                "nodes": {"table": "book"},
+            },
+            validate=False,
+            repl_slots=False,
+        )
+        sync._buffer = [Mock()]
+        sync._buffer_last_lsn = "0/12345"
+        sync._pg_in_txn = True
+
+        error = DatabaseError(
+            "error with status PGRES_COPY_BOTH and no message from the libpq"
+        )
+        with patch.object(sync, "replication_slots", return_value=True), patch.object(
+            sync, "wal_catchup"
+        ), patch.object(
+            sync, "_wal_stream", side_effect=[error, KeyboardInterrupt]
+        ) as mock_stream:
+            with pytest.raises(KeyboardInterrupt):
+                sync.wal_consumer()
+
+        assert mock_stream.call_count == 2
+        assert sync._buffer == []
+        assert sync._buffer_last_lsn is None
+        assert sync._pg_in_txn is False
+        mock_sleep.assert_called_once_with(settings.WAL_RECONNECT_INTERVAL)
 
     @patch("pgsync.sync.show_settings")
     @patch("pgsync.sync.validate_config")

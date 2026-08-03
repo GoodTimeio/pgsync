@@ -99,8 +99,12 @@ WAL_KEEPALIVE_INTERVAL = env.float("WAL_KEEPALIVE_INTERVAL", default=3.0)
 # wal_sender_timeout=0 (disabling keepalives, e.g. for pglogical), set this so
 # ONLY pgsync's walsender gets keepalives, leaving other slots untouched.
 # Set to 0 to inherit the server value. Must be comfortably larger than
-# WAL_KEEPALIVE_INTERVAL so the server does not time us out.
-WAL_SENDER_TIMEOUT = env.int("WAL_SENDER_TIMEOUT", default=10000)
+# WAL_KEEPALIVE_INTERVAL and the longest synchronous bulk operation so the
+# server does not disconnect while a transaction is being processed.
+WAL_SENDER_TIMEOUT = env.int("WAL_SENDER_TIMEOUT", default=60000)
+# Delay before reconnecting a logical replication stream after a transient
+# connection-level libpq error.
+WAL_RECONNECT_INTERVAL = env.float("WAL_RECONNECT_INTERVAL", default=5.0)
 # One-shot forward catch-up bound for WAL mode. When set, pgsync re-materializes
 # only rows whose xmin >= this value before it begins streaming, closing the gap
 # left when swapping a slot's plugin without a full reseed. Use the OLD slot's

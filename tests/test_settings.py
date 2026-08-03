@@ -32,6 +32,15 @@ def test_database_url(mocker):
     assert str(engine.engine.url) == url
 
 
+def test_wal_sender_timeout_default(monkeypatch):
+    """The walsender timeout must leave room for synchronous bulk work."""
+    monkeypatch.delenv("WAL_SENDER_TIMEOUT", raising=False)
+    monkeypatch.delenv("WAL_RECONNECT_INTERVAL", raising=False)
+    importlib.reload(settings)
+    assert settings.WAL_SENDER_TIMEOUT == 60000
+    assert settings.WAL_RECONNECT_INTERVAL == 5.0
+
+
 def test_search_url(mocker, monkeypatch):
     """Test the search url is configured."""
     mock_get_search_url = mocker.patch(

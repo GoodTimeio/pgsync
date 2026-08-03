@@ -19,7 +19,7 @@ import click
 import pymysql
 import sqlalchemy as sa
 import sqlparse
-from psycopg2 import OperationalError
+from psycopg2 import DatabaseError, OperationalError
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 from pymysqlreplication import BinLogStreamReader
 from pymysqlreplication.event import FormatDescriptionEvent, RotateEvent
@@ -160,6 +160,7 @@ class Sync(Base, metaclass=Singleton):
         self._pgoutput: t.Optional[PgOutputDecoder] = None
         # whether we are currently between a pgoutput BEGIN and COMMIT
         self._pg_in_txn: bool = False
+        self._wal_status_started: bool = False
 
     @property
     def slot_name(self) -> str:
@@ -2055,44 +2056,78 @@ class Sync(Base, metaclass=Singleton):
         # with changes the freshly created slot also captured.
         self.wal_catchup()
 
+        while True:
+            try:
+                self._wal_stream()
+            except DatabaseError as exc:
+                # SQLSTATE errors generally indicate a permanent server-side
+                # problem (missing publication, invalid slot, permissions).
+                # A libpq connection failure has no SQLSTATE and is replayable
+                # from the slot's last confirmed flush position.
+                if exc.pgcode is not None:
+                    raise
+                logger.warning(
+                    "Logical replication connection lost; reconnecting in "
+                    f"{settings.WAL_RECONNECT_INTERVAL}s: {exc}"
+                )
+                self._buffer.clear()
+                self._buffer_last_lsn = None
+                self._pg_in_txn = False
+                time.sleep(settings.WAL_RECONNECT_INTERVAL)
+
+    def _wal_stream(self) -> None:
+        """Open and consume one logical replication connection."""
+
         # open a replication‐mode connection
         conn = pg_logical_repl_conn(database=self.database)
-        cursor = conn.cursor()
+        try:
+            cursor = conn.cursor()
 
-        if self.plugin == "pgoutput":
-            if not self.publication:
-                raise RuntimeError(
-                    "PUBLICATION is required when using the pgoutput plugin. "
-                    'Set the "publication" key in the schema config or the '
-                    "PUBLICATION env var."
+            if self.plugin == "pgoutput":
+                if not self.publication:
+                    raise RuntimeError(
+                        "PUBLICATION is required when using the pgoutput "
+                        'plugin. Set the "publication" key in the schema '
+                        'config or the "PUBLICATION" env var.'
+                    )
+                self._pgoutput = PgOutputDecoder()
+                cursor.start_replication(
+                    slot_name=self.__name,
+                    decode=False,  # pgoutput is a binary protocol
+                    options={
+                        "proto_version": settings.PGOUTPUT_PROTO_VERSION,
+                        "publication_names": self.publication,
+                    },
                 )
-            self._pgoutput = PgOutputDecoder()
-            cursor.start_replication(
-                slot_name=self.__name,
-                decode=False,  # pgoutput is a binary protocol
-                options={
-                    "proto_version": settings.PGOUTPUT_PROTO_VERSION,
-                    "publication_names": self.publication,
-                },
-            )
+                self._start_wal_status()
+                logger.info(
+                    f"Starting logical replication stream "
+                    f"(pgoutput, publication={self.publication})..."
+                )
+                self._pgoutput_stream(cursor)
+            else:
+                # start streaming; include XIDs so you see BEGIN/COMMIT markers
+                cursor.start_replication(
+                    slot_name=self.__name,
+                    options={
+                        "include-xids": "1",
+                        "skip-empty-xacts": "1",
+                    },
+                    decode=True,  # gets you str instead of bytes
+                )
+                self._start_wal_status()
+                logger.info(
+                    "Starting logical replication stream (test_decoding)..."
+                )
+                cursor.consume_stream(self.consume)
+        finally:
+            conn.close()
+
+    def _start_wal_status(self) -> None:
+        """Start the WAL status reporter once across reconnects."""
+        if not self._wal_status_started:
             self.wal_status()
-            logger.info(
-                f"Starting logical replication stream "
-                f"(pgoutput, publication={self.publication})..."
-            )
-            self._pgoutput_stream(cursor)
-        else:
-            # start streaming; include XIDs so you see BEGIN/COMMIT markers
-            cursor.start_replication(
-                slot_name=self.__name,
-                options={"include-xids": "1", "skip-empty-xacts": "1"},
-                decode=True,  # gets you str instead of bytes
-            )
-            self.wal_status()
-            logger.info(
-                "Starting logical replication stream (test_decoding)..."
-            )
-            cursor.consume_stream(self.consume)
+            self._wal_status_started = True
 
     def wal_catchup(self) -> None:
         """Forward-sync rows changed since ``WAL_CATCHUP_TXMIN`` (one-shot).
